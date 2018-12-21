@@ -1,5 +1,5 @@
 const Airtable = require("airtable");
-require('dotenv').config();
+require("dotenv").config();
 
 Airtable.configure({
   endpointUrl: "https://api.airtable.com",
@@ -45,7 +45,7 @@ function getUnitItemsAndurnoverTasks() {
   base("Items")
     .select({
       view: "Grid view",
-      filterByFormula: `OR({unit}=${unitId})` // Use unit Id's here
+      filterByFormula: `{unit}=${unitId}` // Use unit Id's here
     })
     .eachPage(
       async records => {
@@ -125,7 +125,7 @@ function createInspectionDataRecords() {
 
 // Get a unit items from inspection data table during pre-walkthrough with the turnover tasks
 async function getUnitInspectionData(inspectionType, unitId) {
-  let items = await base("Inspections Data").select({
+  const items = await base("Inspections Data").select({
     view: "Grid view",
     filterByFormula: `AND({unit}=${unitId}, {category}=${inspectionType})`
   });
@@ -141,25 +141,37 @@ async function getUnitInspectionData(inspectionType, unitId) {
       const tasksPromises = [];
       let tasksData;
       let formattedTasksData = [];
-      if(turnoverTasks) {
-        for(let taskId of turnoverTasks) tasksPromises.push(retrieveRecordById("Tasks Data", taskId));
+      if (turnoverTasks) {
+        for (let taskId of turnoverTasks)
+          tasksPromises.push(retrieveRecordById("Tasks Data", taskId));
         tasksData = await Promise.all(tasksPromises);
-        for(let taskData of tasksData) {
+        for (let taskData of tasksData) {
           const fields = taskData.fields;
-          const referencedTask = fields['task'] && await retrieveRecordById("Turnover Tasks", fields['task'][0]);
-          const linkedTaskInfo = referencedTask && { id: referencedTask.id, name: referencedTask.fields.task_name }
-          const data = { id: taskData.id, taskId: fields.task_Id, done: fields['Done'], inspectionId: fields['inspection_Id'], linkedTaskInfo }
+          const referencedTask =
+            fields["task"] &&
+            (await retrieveRecordById("Turnover Tasks", fields["task"][0]));
+          const linkedTaskInfo = referencedTask && {
+            id: referencedTask.id,
+            name: referencedTask.fields.task_name
+          };
+          const data = {
+            id: taskData.id,
+            taskId: fields.task_Id,
+            done: fields["Done"],
+            inspectionId: fields["inspection_Id"],
+            linkedTaskInfo
+          };
           formattedTasksData.push(data);
         }
       }
-      
+
       const formattedRecord = {
         id: record.id,
         name: itemFields.name,
         unit: itemFields.unit,
-        cost: itemFields['cost'],
+        cost: itemFields["cost"],
         turnOverTeam: itemFields.turnover_team,
-        turnoverTasks: formattedTasksData,
+        turnoverTasks: formattedTasksData
       };
       const recordObject = {
         id: record.id,
@@ -173,7 +185,7 @@ async function getUnitInspectionData(inspectionType, unitId) {
       };
       formattedData.push(recordObject);
     }
-  
+
     console.log("Data::", formattedData);
     return formattedData;
     // return records;
@@ -183,15 +195,43 @@ async function getUnitInspectionData(inspectionType, unitId) {
 }
 
 // Get a unit items from inspection data table during pre-walkthrough with the turnover tasks
-getUnitInspectionData("'Pre-Walkthrough'", 285873023222986).then(async data => {
-  console.log('Data::', data);
-});
+// getUnitInspectionData("'Pre-Walkthrough'", 285873023222986).then(async data => {
+//   console.log("Data::", data);
+// });
 
 // Retrieve  a single record using the ID and table name
 async function retrieveRecordById(tableName, recordId) {
   const record = await base(`${tableName}`).find(`${recordId}`);
   return record;
 }
+
+// Check the status of a movout stage. Disable the stage button iof it's done.
+async function checkMoveoutInspectionStagesStatus(moveoutId) {
+  const data = await base("Inspection Stages Data").select({
+    // Selecting the first 3 records in Grid view:
+    view: "Grid view",
+    filterByFormula: `{moveout_Id}=${moveoutId}`
+  });
+
+  const formattedData = [];
+
+  const stagesData = await data.all();
+  if(stagesData) {
+    for(let stageData of stagesData) {
+      const fields = stageData.fields;
+      const stageId = fields.stage[0];
+      const stageInfo = await retrieveRecordById("Inspection Stages", stageId);
+      const data = {id: stageData.id, moveoutId: fields.moveout_Id, done: fields.Done, stage: { id: stageInfo.id, name: stageInfo.fields.stage}};
+      formattedData.push(data);
+    }
+  }
+  
+  return formattedData;
+}
+
+checkMoveoutInspectionStagesStatus(285873023222986).then(data=> {
+  console.log(data);
+});
 
 // retrieveRecordById('Items', 'recYYqKaJ8sL1q81Q').then(record=> {
 //   const fields = record['fields'];
