@@ -123,6 +123,7 @@ function createInspectionDataRecords() {
 
 // createInspectionDataRecords();
 
+// Get a unit items from inspection data table during pre-walkthrough with the turnover tasks
 async function getUnitInspectionData(inspectionType, unitId) {
   let items = await base("Inspections Data").select({
     view: "Grid view",
@@ -130,8 +131,52 @@ async function getUnitInspectionData(inspectionType, unitId) {
   });
 
   try {
-    const records = await items.all();
-    return records;
+    const data = await items.all();
+    const formattedData = [];
+    for (let record of data) {
+      const fields = record["fields"];
+      const item = await retrieveRecordById("Items", fields.item[0]);
+      const itemFields = item["fields"];
+      const turnoverTasks = fields["Tasks Data"];
+      const tasksPromises = [];
+      let tasksData;
+      let formattedTasksData = [];
+      if(turnoverTasks) {
+        for(let taskId of turnoverTasks) tasksPromises.push(retrieveRecordById("Tasks Data", taskId));
+        tasksData = await Promise.all(tasksPromises);
+        for(let taskData of tasksData) {
+          const fields = taskData.fields;
+          const referencedTask = fields['task'] && await retrieveRecordById("Turnover Tasks", fields['task'][0]);
+          const linkedTaskInfo = referencedTask && { id: referencedTask.id, name: referencedTask.fields.task_name }
+          const data = { id: taskData.id, taskId: fields.task_Id, done: fields['Done'], inspectionId: fields['inspection_Id'], linkedTaskInfo }
+          formattedTasksData.push(data);
+        }
+      }
+      
+      const formattedRecord = {
+        id: record.id,
+        name: itemFields.name,
+        unit: itemFields.unit,
+        cost: itemFields['cost'],
+        turnOverTeam: itemFields.turnover_team,
+        turnoverTasks: formattedTasksData,
+      };
+      const recordObject = {
+        id: record.id,
+        category: fields.category,
+        moveoutId: fields.moveout_Id,
+        condition: fields.condition,
+        notes: fields.notes,
+        item: formattedRecord,
+        unit: fields.unit,
+        done: fields.done
+      };
+      formattedData.push(recordObject);
+    }
+  
+    console.log("Data::", formattedData);
+    return formattedData;
+    // return records;
   } catch (err) {
     console.log("Error::", err);
   }
@@ -139,50 +184,7 @@ async function getUnitInspectionData(inspectionType, unitId) {
 
 // Get a unit items from inspection data table during pre-walkthrough with the turnover tasks
 getUnitInspectionData("'Pre-Walkthrough'", 285873023222986).then(async data => {
-  const formattedData = [];
-  for (let record of data) {
-    const fields = record["fields"];
-    const item = await retrieveRecordById("Items", fields.item[0]);
-    const itemFields = item["fields"];
-    const turnoverTasks = fields["Tasks Data"];
-    const tasksPromises = [];
-    let tasksData;
-    let formattedTasksData = [];
-    if(turnoverTasks) {
-      for(let taskId of turnoverTasks) tasksPromises.push(retrieveRecordById("Tasks Data", taskId));
-      tasksData = await Promise.all(tasksPromises);
-      for(let taskData of tasksData) {
-        const fields = taskData.fields;
-        const referencedTask = fields['task'] && await retrieveRecordById("Turnover Tasks", fields['task'][0]);
-        const linkedTaskInfo = referencedTask && { id: referencedTask.id, name: referencedTask.fields.task_name }
-        const data = { id: taskData.id, taskId: fields.task_Id, done: fields['Done'], inspectionId: fields['inspection_Id'], linkedTaskInfo }
-        formattedTasksData.push(data);
-      }
-    }
-    
-    const formattedRecord = {
-      id: record.id,
-      name: itemFields.name,
-      unit: itemFields.unit,
-      cost: itemFields['cost'],
-      turnOverTeam: itemFields.turnover_team,
-      turnoverTasks: formattedTasksData,
-    };
-    const recordObject = {
-      id: record.id,
-      category: fields.category,
-      moveoutId: fields.moveout_Id,
-      condition: fields.condition,
-      notes: fields.notes,
-      item: formattedRecord,
-      unit: fields.unit,
-      done: fields.done
-    };
-    formattedData.push(recordObject);
-  }
-
-  console.log("Data::", formattedData);
-  return formattedData;
+  console.log('Data::', data);
 });
 
 // Retrieve  a single record using the ID and table name
