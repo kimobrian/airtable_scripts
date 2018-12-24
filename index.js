@@ -1,7 +1,8 @@
 const Airtable = require("airtable");
 require("dotenv").config();
-const moment = require('moment'); // TODO: Crate a custom function instead using a whole lib
+const moment = require("moment"); // TODO: Crate a custom function instead using a whole lib
 
+// Configure Airtable connection
 Airtable.configure({
   endpointUrl: "https://api.airtable.com",
   apiKey: process.env.AIRTABLE_API_KEY
@@ -10,6 +11,7 @@ const base = Airtable.base("app1tVRxqZjcFdpMt");
 
 /**
  * fetches items and their corresponding turn over tasks and formats them as objects
+ * @param {string} unitId 
  */
 async function fetchUnitItemsAndConstructInspectionItems(unitId) {
   const categories = [
@@ -31,7 +33,7 @@ async function fetchUnitItemsAndConstructInspectionItems(unitId) {
       for (let item of records) {
         const turnoverTasks = item["fields"]["Turnover tasks"]; // Access Id's for Turnover tasks
         let tasks;
-        if (turnoverTasks) { 
+        if (turnoverTasks) {
           let filterByFormula = "OR(";
           for (const id of turnoverTasks) {
             filterByFormula = filterByFormula.concat(`RECORD_ID()='${id}'`);
@@ -43,23 +45,23 @@ async function fetchUnitItemsAndConstructInspectionItems(unitId) {
             view: "Grid view",
             filterByFormula
           });
-        } 
+        }
 
         const formattedTasks = [];
         const itemTasks = await tasks.all();
-        for(task of itemTasks) {
+        for (task of itemTasks) {
           const fields = task.fields;
           formattedTasks.push({
             id: task.id,
             taskName: fields.task_name,
             physicalId: fields.task_id
-          })
+          });
         }
         formattedItems.push({
           unit: [item.fields.unit[0]],
           item: [item.id],
           category,
-          date: moment(new Date()).format('MM/DD/YYYY'),
+          date: moment(new Date()).format("MM/DD/YYYY"),
           turnoverTasks: formattedTasks
         });
       }
@@ -68,58 +70,72 @@ async function fetchUnitItemsAndConstructInspectionItems(unitId) {
   }
 }
 
-// fetchUnitItemsAndConstructInspectionItems(285873023222986).then(data=> {
-//   console.log('Data::', data);
-//   data.forEach(d=> {
-//     console.log('>>>>', d.turnoverTasks);
-//   })
-// })
+/*
+ * fetchUnitItemsAndConstructInspectionItems(285873023222986).then(data=> {
+ *   console.log('Data::', data);
+ *   data.forEach(d=> {
+ *     console.log('>>>>', d.turnoverTasks);
+ *   })
+ * })
+ */
 
 /**
  * Copies items in the "Inpections Data" table for tracking and their corresponding "Turnover tasks" to the tasks Data
+ * 
+ * @param {string} unitId
  */
 function createInspectionDataRecords(unitId) {
   let createItemsAndTasksPromises = [];
-  fetchUnitItemsAndConstructInspectionItems(unitId).then(items => {
-    for (let item of items) {
-      const turnoverTasks = item.turnoverTasks;
-      delete item.turnoverTasks;
-      let createTask;
-      const createItem = base("Inspections Data").create(item, (
-        err,
-        record
-      )=> {
-        if (err) {
-          console.error(err);
-          return;
-        }
-        for(let task of turnoverTasks) {
-          delete task.taskName;
-          delete task.physicalId;
-          task.task = [task.id];
-          delete task.id;
-          task.inspection_Id = [record.id];
-          const createTask = base("Tasks Data").create(task, (err, rec)=> {
+  fetchUnitItemsAndConstructInspectionItems(unitId).then(
+    items => {
+      for (let item of items) {
+        const turnoverTasks = item.turnoverTasks;
+        delete item.turnoverTasks;
+        let createTask;
+        const createItem = base("Inspections Data").create(
+          item,
+          (err, record) => {
             if (err) {
-              console.error('Task creation:',err);
+              console.error(err);
               return;
             }
-          })
-          createItemsAndTasksPromises.push(createTask);
-        }
-      });
+            for (let task of turnoverTasks) {
+              delete task.taskName;
+              delete task.physicalId;
+              task.task = [task.id];
+              delete task.id;
+              task.inspection_Id = [record.id];
+              const createTask = base("Tasks Data").create(task, (err, rec) => {
+                if (err) {
+                  console.error("Task creation:", err);
+                  return;
+                }
+              });
+              createItemsAndTasksPromises.push(createTask);
+            }
+          }
+        );
 
-      createItemsAndTasksPromises.push(createItem);
+        createItemsAndTasksPromises.push(createItem);
+      }
+    },
+    err => {
+      console.log("Error:::", err);
     }
-  }, (err)=> {
-    console.log('Error:::', err);
-  });
+  );
   return Promise.all(createItemsAndTasksPromises);
 }
 
-// createInspectionDataRecords(285873023222986);
+// //createInspectionDataRecords(285873023222986);
 
-// Get a unit items from inspection data table during an inspection with the turnover tasks
+/**
+ * Get a unit items from inspection data table during an inspection with the turnover tasks
+ *
+ * @param {string} inspectionType One of the four inspeection types [ Pre-Walkthrough, FInal Walkthrough, Turnover , Final Insoection ]
+ * @param {string} unitId
+ * @param {string} moveoutId
+ * @returns {Promise} 
+ */
 async function getUnitInspectionData(inspectionType, unitId, moveoutId) {
   const items = await base("Inspections Data").select({
     view: "Grid view",
@@ -138,8 +154,9 @@ async function getUnitInspectionData(inspectionType, unitId, moveoutId) {
       let tasksData;
       let formattedTasksData = [];
       if (turnoverTasks) {
-        for (let taskId of turnoverTasks)
+        for (let taskId of turnoverTasks) {
           tasksPromises.push(retrieveRecordById("Tasks Data", taskId));
+        }
         tasksData = await Promise.all(tasksPromises);
         for (let taskData of tasksData) {
           const fields = taskData.fields;
@@ -161,7 +178,7 @@ async function getUnitInspectionData(inspectionType, unitId, moveoutId) {
         }
       }
 
-      const formattedRecord = {
+      const formattedItemRecord = {
         id: record.id,
         name: itemFields.name,
         unit: itemFields.unit,
@@ -175,7 +192,7 @@ async function getUnitInspectionData(inspectionType, unitId, moveoutId) {
         moveoutId: fields.moveout_Id,
         condition: fields.condition,
         notes: fields.notes,
-        item: formattedRecord,
+        item: formattedItemRecord,
         unit: fields.unit,
         done: fields.Done
       };
@@ -188,21 +205,32 @@ async function getUnitInspectionData(inspectionType, unitId, moveoutId) {
   }
 }
 
-// Get a unit items from inspection data table during pre-walkthrough with the turnover tasks
-getUnitInspectionData("'Pre-Walkthrough'", 285873023222986, 285873023222967).then(async data => {
-  console.log("Data::", data);
-});
+/*
+ * Get a unit items from inspection data table during pre-walkthrough with the turnover tasks
+ * getUnitInspectionData("'Pre-Walkthrough'", 285873023222986, 285873023222967).then(async data => {
+ *   console.log("Data::", data);
+ * });
+ */
 
-// Retrieve  a single record using the ID and table name
+/**
+ * Retrieve  a single record using the ID and table name
+ *
+ * @param {string} tableName Name of table
+ * @param {string} recordId Id of a record
+ * @returns {Promise} Promise with the retrieved object
+ */
 async function retrieveRecordById(tableName, recordId) {
   const record = await base(`${tableName}`).find(`${recordId}`);
   return record;
 }
 
-// Check the status of a movout stage. Disable the stage button iof it's done.
+/**
+ * Check the status of a movout stage. 
+ * TODO: Disable the stage button if it's done.
+ * @param {string} moveoutId
+ */ 
 async function checkMoveoutInspectionStagesStatus(moveoutId) {
   const data = await base("Inspection Stages Data").select({
-    // Selecting the first 3 records in Grid view:
     view: "Grid view",
     filterByFormula: `{moveout_Id}=${moveoutId}`
   });
@@ -228,12 +256,60 @@ async function checkMoveoutInspectionStagesStatus(moveoutId) {
   return formattedData;
 }
 
-// checkMoveoutInspectionStagesStatus(285873023222986).then(data=> {
-//   console.log(data);
-// });
+/* 
+ * checkMoveoutInspectionStagesStatus(285873023222986).then(data=> {
+ *   console.log(data);
+ * });
+ */
 
-// retrieveRecordById('Items', 'recYYqKaJ8sL1q81Q').then(record=> {
-//   const fields = record['fields'];
-//   const formattedRecord = { id: record.id, name: fields.name, unit: fields.unit, turnOverTeam: fields.turnover_team, turnoverTasks: fields['Turnover tasks'], inspections: fields["All Inspections"]}
-//   console.log(formattedRecord)
-// })
+/*
+ * retrieveRecordById('Items', 'recYYqKaJ8sL1q81Q').then(record=> {
+ *  const fields = record['fields'];
+ *  const formattedRecord = { id: record.id, name: fields.name, unit: fields.unit, turnOverTeam: fields.turnover_team, turnoverTasks: fields['Turnover tasks'], inspections: fields["All Inspections"]}
+ *  console.log(formattedRecord)
+ * })
+ */
+
+/**
+ * To update a linked record, provide the Id of the linked record in an array otherwise just provide a value for a normal field.
+ *
+ * @param {string} table // Name of the table
+ * @param {string} recordId
+ * @param {object} fieldsObject // key:value pair of record names and values. Note: For linked fields, the value is an array of Id(s)
+ */
+function updateRecord(table, recordId, fieldsObject) {
+  return base(table).update(recordId, fieldsObject, (err, record) => {
+    if (err) {
+      console.error(err);
+      return;
+    }
+    console.log(record["fields"]);
+    return record;
+  });
+}
+
+// updateRecord('Inspections Data', 'reczIK9kDvGtkTD8I', { Done: false }); // Normal field update
+updateRecord("Inspections Data", "reczIK9kDvGtkTD8I", {
+  unit: ["rec8lVinzVrSorPSG"] // Linked field update are provided as an array of Id`s
+});
+
+/**
+ * Fetch all records from any table
+ *
+ * @param {string} table Name of table
+ * @returns {Promise} Resolves to fetched records
+ */
+async function fetchAllRecords(table) {
+  const records = await base(table).select({
+    view: "Grid view"
+  });
+  return await records.all();
+}
+
+/*
+ * fetchAllRecords("Units").then(data=> {
+ *   for(const d of data) {
+ *     console.log({id: d.id, fields: d.fields})
+ *   }
+ * })
+ */
