@@ -1,5 +1,6 @@
 const Airtable = require("airtable");
 require("dotenv").config();
+const moment = require('moment'); // TODO: Crate a custom function instead using a whole lib
 
 Airtable.configure({
   endpointUrl: "https://api.airtable.com",
@@ -8,10 +9,9 @@ Airtable.configure({
 const base = Airtable.base("app1tVRxqZjcFdpMt");
 
 /**
- * fetches items and formats them as objects
+ * fetches items and their corresponding turn over tasks and formats them as objects
  */
-async function fetchUnitItemsAndConstructInspectionItems() {
-  const unitId = 285873023222986;
+async function fetchUnitItemsAndConstructInspectionItems(unitId) {
   const categories = [
     "Pre-Walkthrough",
     "Final Walkthrough",
@@ -29,10 +29,38 @@ async function fetchUnitItemsAndConstructInspectionItems() {
   if (records) {
     for (let category of categories) {
       for (let item of records) {
+        const turnoverTasks = item["fields"]["Turnover tasks"]; // Access Id's for Turnover tasks
+        let tasks;
+        if (turnoverTasks) { 
+          let filterByFormula = "OR(";
+          for (const id of turnoverTasks) {
+            filterByFormula = filterByFormula.concat(`RECORD_ID()='${id}'`);
+            turnoverTasks.indexOf(id) !== turnoverTasks.length - 1
+              ? (filterByFormula = filterByFormula.concat(","))
+              : (filterByFormula = filterByFormula.concat(")"));
+          }
+          tasks = await base("Turnover Tasks").select({
+            view: "Grid view",
+            filterByFormula
+          });
+        } 
+
+        const formattedTasks = [];
+        const itemTasks = await tasks.all();
+        for(task of itemTasks) {
+          const fields = task.fields;
+          formattedTasks.push({
+            id: task.id,
+            taskName: fields.task_name,
+            physicalId: fields.task_id
+          })
+        }
         formattedItems.push({
           unit: [item.fields.unit[0]],
           item: [item.id],
-          category
+          category,
+          date: moment(new Date()).format('MM/DD/YYYY'),
+          turnoverTasks: formattedTasks
         });
       }
     }
@@ -40,94 +68,62 @@ async function fetchUnitItemsAndConstructInspectionItems() {
   }
 }
 
-function getUnitItemsAndurnoverTasks() {
-  const unitId = 285873023222986;
-  base("Items")
-    .select({
-      view: "Grid view",
-      filterByFormula: `{unit}=${unitId}` // Use unit Id's here
-    })
-    .eachPage(
-      async records => {
-        for (const itemRecord of records) {
-          const itemName = itemRecord["fields"]["name"];
-          var turnoverTasks = itemRecord["fields"]["Turnover tasks"]; // Access Id's for Turnover tasks
-          if (turnoverTasks) {
-            // Construct a filter query for all the Turnover Tasks ID's
-            let filterByFormula = "OR(";
-            for (const id of turnoverTasks) {
-              filterByFormula = filterByFormula.concat(`RECORD_ID()='${id}'`);
-              turnoverTasks.indexOf(id) !== turnoverTasks.length - 1
-                ? (filterByFormula = filterByFormula.concat(","))
-                : (filterByFormula = filterByFormula.concat(")"));
-            }
-            await base("Turnover Tasks")
-              .select({
-                view: "Grid view",
-                filterByFormula
-              })
-              .eachPage(
-                records => {
-                  console.log(
-                    `*------------${itemName} Turnover Tasks-----------*`
-                  );
-                  for (let record of records) {
-                    console.log(
-                      "Turn over Tasks",
-                      record["fields"]["task_name"]
-                    );
-                  }
-                },
-                err => {
-                  if (err) {
-                    console.error(err);
-                    return;
-                  }
-                }
-              );
-          }
-        }
-      },
-      err => {
-        if (err) {
-          console.error(err);
-          return;
-        }
-      }
-    );
-}
+// fetchUnitItemsAndConstructInspectionItems(285873023222986).then(data=> {
+//   console.log('Data::', data);
+//   data.forEach(d=> {
+//     console.log('>>>>', d.turnoverTasks);
+//   })
+// })
 
 /**
- * Copies items in the "Inpections Data" table for tracking
+ * Copies items in the "Inpections Data" table for tracking and their corresponding "Turnover tasks" to the tasks Data
  */
-
-function createInspectionDataRecords() {
-  let createItemsPromises = [];
-  fetchUnitItemsAndConstructInspectionItems().then(items => {
+function createInspectionDataRecords(unitId) {
+  let createItemsAndTasksPromises = [];
+  fetchUnitItemsAndConstructInspectionItems(unitId).then(items => {
     for (let item of items) {
-      const createItem = base("Inspections Data").create(item, function(
+      const turnoverTasks = item.turnoverTasks;
+      delete item.turnoverTasks;
+      let createTask;
+      const createItem = base("Inspections Data").create(item, (
         err,
         record
-      ) {
+      )=> {
         if (err) {
           console.error(err);
           return;
         }
-        console.log(record.getId());
+        for(let task of turnoverTasks) {
+          delete task.taskName;
+          delete task.physicalId;
+          task.task = [task.id];
+          delete task.id;
+          task.inspection_Id = [record.id];
+          const createTask = base("Tasks Data").create(task, (err, rec)=> {
+            if (err) {
+              console.error('Task creation:',err);
+              return;
+            }
+          })
+          createItemsAndTasksPromises.push(createTask);
+        }
       });
-      createItemsPromises.push(createItem);
+
+      createItemsAndTasksPromises.push(createItem);
     }
+  }, (err)=> {
+    console.log('Error:::', err);
   });
-  return Promise.all(createItemsPromises);
+  return Promise.all(createItemsAndTasksPromises);
 }
 
-// createInspectionDataRecords();
+// createInspectionDataRecords(285873023222986);
 
-// Get a unit items from inspection data table during pre-walkthrough with the turnover tasks
-async function getUnitInspectionData(inspectionType, unitId) {
+// Get a unit items from inspection data table during an inspection with the turnover tasks
+async function getUnitInspectionData(inspectionType, unitId, moveoutId) {
   const items = await base("Inspections Data").select({
     view: "Grid view",
-    filterByFormula: `AND({unit}=${unitId}, {category}=${inspectionType})`
+    filterByFormula: `AND({unit}=${unitId}, {category}=${inspectionType}, {moveout_Id}=${moveoutId})`
   });
 
   try {
@@ -181,23 +177,21 @@ async function getUnitInspectionData(inspectionType, unitId) {
         notes: fields.notes,
         item: formattedRecord,
         unit: fields.unit,
-        done: fields.done
+        done: fields.Done
       };
       formattedData.push(recordObject);
     }
 
-    console.log("Data::", formattedData);
     return formattedData;
-    // return records;
   } catch (err) {
     console.log("Error::", err);
   }
 }
 
 // Get a unit items from inspection data table during pre-walkthrough with the turnover tasks
-// getUnitInspectionData("'Pre-Walkthrough'", 285873023222986).then(async data => {
-//   console.log("Data::", data);
-// });
+getUnitInspectionData("'Pre-Walkthrough'", 285873023222986, 285873023222967).then(async data => {
+  console.log("Data::", data);
+});
 
 // Retrieve  a single record using the ID and table name
 async function retrieveRecordById(tableName, recordId) {
@@ -216,22 +210,27 @@ async function checkMoveoutInspectionStagesStatus(moveoutId) {
   const formattedData = [];
 
   const stagesData = await data.all();
-  if(stagesData) {
-    for(let stageData of stagesData) {
+  if (stagesData) {
+    for (let stageData of stagesData) {
       const fields = stageData.fields;
       const stageId = fields.stage[0];
       const stageInfo = await retrieveRecordById("Inspection Stages", stageId);
-      const data = {id: stageData.id, moveoutId: fields.moveout_Id, done: fields.Done, stage: { id: stageInfo.id, name: stageInfo.fields.stage}};
+      const data = {
+        id: stageData.id,
+        moveoutId: fields.moveout_Id,
+        done: fields.Done,
+        stage: { id: stageInfo.id, name: stageInfo.fields.stage }
+      };
       formattedData.push(data);
     }
   }
-  
+
   return formattedData;
 }
 
-checkMoveoutInspectionStagesStatus(285873023222986).then(data=> {
-  console.log(data);
-});
+// checkMoveoutInspectionStagesStatus(285873023222986).then(data=> {
+//   console.log(data);
+// });
 
 // retrieveRecordById('Items', 'recYYqKaJ8sL1q81Q').then(record=> {
 //   const fields = record['fields'];
