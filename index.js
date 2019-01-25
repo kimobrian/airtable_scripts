@@ -20,12 +20,29 @@ async function fetchUnitItemsAndConstructInspectionItems(unitId) {
     "Turnover",
     "Final Inspection"
   ];
-  let items = await base("Items").select({
-    view: "Grid view",
-    filterByFormula: `{unit}=${unitId}`
-  });
 
-  const records = await items.all();
+  let items;
+  try {
+    items = await base("Items").select({
+      view: "Grid view",
+      filterByFormula: `OR({unit}=${unitId}, {type}="Fixture")`
+    });
+  } catch (error) {
+    console.log('Error:::', error);
+  }
+  // let items = await base("Items").select({
+  //   view: "Grid view",
+  //   filterByFormula: `OR({unit}=${unitId}`
+  // });
+
+  let records;
+
+  try {
+    records = await items.all();
+  } catch (error) {
+    console.log('Error:::', error);
+  }
+  // const records = await items.all();
 
   const formattedItems = [];
   if (records) {
@@ -41,14 +58,29 @@ async function fetchUnitItemsAndConstructInspectionItems(unitId) {
               ? (filterByFormula = filterByFormula.concat(","))
               : (filterByFormula = filterByFormula.concat(")"));
           }
-          tasks = await base("Turnover Tasks").select({
-            view: "Grid view",
-            filterByFormula
-          });
+
+          try {
+            tasks = await base("Turnover Tasks").select({
+              view: "Grid view",
+              filterByFormula
+            });
+          } catch (error) {
+            console.log('Error:::', error);
+          }
+          // tasks = await base("Turnover Tasks").select({
+          //   view: "Grid view",
+          //   filterByFormula
+          // });
         }
 
         const formattedTasks = [];
-        const itemTasks = await tasks.all();
+        let itemTasks;
+        try {
+          itemTasks = await tasks.all();
+        } catch (error) {
+          console.log('Error:::', error);
+        }
+        // const itemTasks = await tasks.all();
         for (task of itemTasks) {
           const fields = task.fields;
           formattedTasks.push({
@@ -70,14 +102,15 @@ async function fetchUnitItemsAndConstructInspectionItems(unitId) {
   }
 }
 
-/*
- * fetchUnitItemsAndConstructInspectionItems(285873023222986).then(data=> {
- *   console.log('Data::', data);
- *   data.forEach(d=> {
- *     console.log('>>>>', d.turnoverTasks);
- *   })
- * })
- */
+fetchUnitItemsAndConstructInspectionItems(285873023222997).then(data=> {
+  console.log('Data::', data);
+  data.forEach(d=> {
+    console.log('>>>>', d.turnoverTasks);
+  })
+}).catch(e=> {
+  console.log('>>>>Error::', e)
+})
+ 
 
 /**
  * Copies items in the "Inpections Data" table for tracking and their corresponding "Turnover tasks" to the tasks Data
@@ -289,9 +322,9 @@ function updateRecord(table, recordId, fieldsObject) {
 }
 
 // updateRecord('Inspections Data', 'reczIK9kDvGtkTD8I', { Done: false }); // Normal field update
-updateRecord("Inspections Data", "reczIK9kDvGtkTD8I", {
-  unit: ["rec8lVinzVrSorPSG"] // Linked field update are provided as an array of Id`s
-});
+// updateRecord("Inspections Data", "reczIK9kDvGtkTD8I", {
+//   unit: ["rec8lVinzVrSorPSG"] // Linked field update are provided as an array of Id`s
+// });
 
 /**
  * Fetch all records from any table
